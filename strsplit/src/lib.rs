@@ -2,38 +2,80 @@
 // #![warn(missing_debug_implementations, rust_2018_idioms, missing_docs)]
 
 #[derive(Debug)]
-pub struct StrSplit<'a> {
-    remainder: &'a str,
-    delimiter: &'a str, 
+pub struct StrSplit<'haystack, D> {
+    remainder: Option<&'haystack str>,
+    delimiter: D, 
 }
 
-impl<'a> StrSplit<'a> {
-    pub fn new(haystack: &'a str, delimiter: &'a str) -> Self {
+impl<'haystack, D> StrSplit<'haystack, D> {
+    pub fn new(haystack: &'haystack str, delimiter: D) -> Self {
         Self {
-            remainder: haystack, delimiter,
+            remainder: Some(haystack), delimiter,
         }
     }
 }
 
+pub trait Delimiter {
+    fn find_next(&self, s: &str) -> Option<(usize, usize)>;
+}
 
-impl<'a> Iterator for StrSplit<'a> {
-    type Item = &'a str;
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(next_delim) = self.remainder.find(self.delimiter) {
-            let until_delimiter = &self.remainder[..next_delim];
-            self.remainder = &self.remainder[(next_delim + self.delimiter.len())..];
-            Some(until_delimiter)
-        } else if self.remainder.is_empty() {
-            // TODO : bug
-            None
-        } else {
-            let rest = self.remainder;
-            // why ok for assigning &'static str to &'a str
-            // ans: can assign the same type a longer lifetime
-            self.remainder = "";
-            Some(rest)
-        }
+impl Delimiter for &str {
+    fn find_next(&self, s: &str) -> Option<(usize, usize)> {
+        // s: remainder  self: delimiter
+        // find return the position wrapped by option
+        // for map: if none, return none, else use lambda function to wrap the value
+        s.find(self).map(|start| {(start, start + self.len())})
     }
+}
+
+impl Delimiter for char {
+    fn find_next(&self, s: &str) -> Option<(usize, usize)> {
+        s.char_indices().find(|(_, c)| c == self).map(|(start, _)| (start, start + self.len_utf8()))
+    }
+}
+
+impl<'haystack, D> Iterator for StrSplit<'haystack, D>
+where 
+    D: Delimiter 
+{
+    type Item = &'haystack str;
+    fn next(&mut self) -> Option<Self::Item> {
+        // ref mut: we want to change remainder but not take the ownership
+        if let Some(remainder) = self.remainder.as_mut() {
+            // equal to Some(remainder) = &mut self.remainder
+            if let Some((delim_start, delim_end)) = self.delimiter.find_next(remainder) {
+                let until_delimiter = &remainder[..delim_start];
+                *remainder = &remainder[delim_end..];
+                Some(until_delimiter)
+            } else {
+                self.remainder.take()
+            }
+        } else {
+            None
+        }
+
+        /* Equivalent */
+
+        // let remainder = self.remainder.as_mut()?;
+        // if let Some(next_delim) = remainder.find(self.delimiter) {
+        //     let until_delimiter = &remainder[..next_delim];
+        //     *remainder = &remainder[(next_delim + self.delimiter.len())..];
+        //     Some(until_delimiter)
+        // } else {
+        //     self.remainder.take()
+        // }
+
+    }
+}
+
+fn until_char(s: &str, c: char) -> &'_ str {
+    StrSplit::new(s, &*format!("{}", c)).next()
+        .expect("StrSplit always gives at least one result")
+}
+
+#[test]
+fn until_char_test() {
+    assert_eq!(until_char("hello world", 'o'), "hell")
 }
 
 #[test]
@@ -41,4 +83,18 @@ fn it_works() {
     let haystack = "a b c d e";
     let letters = StrSplit::new(haystack, " ");
     assert!(letters.eq(vec!["a", "b", "c", "d", "e"].into_iter()));
+}
+
+#[test]
+fn tail() {
+    let haystack = "a b c d ";
+    let letters = StrSplit::new(haystack, " ");
+    assert!(letters.eq(vec!["a", "b", "c", "d", ""].into_iter()));
+}
+
+#[test]
+fn empty_tail() {
+    let haystack = "a b c d ";
+    let letters = StrSplit::new(haystack, " ");
+    assert!(letters.eq(vec!["a", "b", "c", "d", ""].into_iter()));
 }

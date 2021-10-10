@@ -1,7 +1,8 @@
 
-use std::collections::hash_map::DefaultHasher;
+use std::collections::{hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::mem;
+use std::borrow::Borrow;
 
 const INITIAL_BUCKETS: usize = 1;
 
@@ -19,14 +20,93 @@ impl<K, V> HashMap<K, V> {
     }
 }
 
+pub struct OccupiedEntry<'a, K: 'a, V: 'a> {
+    entry: &'a mut (K, V),
+}
+pub struct VacantEntry<'a, K: 'a, V: 'a> {
+    key: K,
+    map: &'a mut HashMap<K, V>,
+    bucket: usize,
+}
+
+pub enum Entry<'a, K, V> {
+    Occupied(OccupiedEntry<'a, K, V>),
+    Vacant(VacantEntry<'a, K, V>),
+}
+
+impl<'a, K: 'a, V: 'a> VacantEntry<'a, K, V> {
+    pub fn insert(self, value: V) -> &'a mut V 
+    where
+        K: Hash + Eq
+    {
+        if self.map.buckets.is_empty() || self.map.items > 3 * self.map.buckets.len() / 4 {
+            self.map.resize();
+        }
+
+        self.map.buckets[self.bucket].push((self.key, value));
+        self.map.items += 1;
+        &mut self.map.buckets[self.bucket].last_mut().unwrap().1
+    }
+
+}
+
+impl<'a, K: 'a, V: 'a> Entry<'a, K, V> 
+where
+    K: Hash + Eq
+{
+    pub fn or_insert(self, value: V) ->&'a mut V {
+        match self {
+            Entry::Occupied(e) => &mut e.entry.1,
+            Entry::Vacant(e) => {
+                e.insert(value)
+            }
+        }
+    }
+
+    pub fn or_insert_with<F>(self, maker: F) -> &'a mut V
+        where F: FnOnce() -> V 
+    {
+        match self {
+            Entry::Occupied(e) => &mut e.entry.1,
+            Entry::Vacant(e) => e.insert(maker()),
+        }
+    }
+
+    pub fn or_default(self) -> &'a mut V
+    where
+        V: Default,
+    {
+        self.or_insert_with(Default::default)
+    }
+}
+
 impl<K, V> HashMap<K, V> 
 where
     K: Hash + Eq
 {
-    fn bucket(&self, key: &K) -> usize {
+    fn bucket<Q>(&self, key: &Q) -> usize
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         let mut hasher = DefaultHasher::new();
         key.hash(&mut hasher);
         (hasher.finish() % self.buckets.len() as u64) as usize
+    }
+
+    pub fn entry(&mut self, key: K) -> Entry<K, V> {
+        if self.buckets.is_empty() || self.items > 3 * self.buckets.len() / 4 {
+            self.resize();
+        }
+        
+        let bucket = self.bucket(&key);
+        {
+            let bucket = &mut self.buckets[bucket];
+            if let Some(entry) = bucket.iter_mut().find(|&&mut (ref ekey, _)| ekey.borrow() == &key) {
+                return Entry::Occupied(OccupiedEntry {entry: unsafe {&mut *(entry as *mut _)}});
+            }
+        }
+        Entry::Vacant(VacantEntry {key, map: self, bucket})
     }
 
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
@@ -49,22 +129,42 @@ where
         None
     }
 
-    pub fn get(&self, key: &K) -> Option<&V> {
+    // pub fn get(&self, key: &K) -> Option<&V> {
+    //     let bucket = self.bucket(key);
+    //     self.buckets[bucket]
+    //         .iter() // gives us Iterator<Item = &(K, V)>
+    //         .find(|&(ref ekey, _)| ekey == key) // equivalent to find(|x| &x.0 == key)
+    //         .map(|&(_, ref v)| v)
+    // }
+
+    pub fn get<Q>(&self, key: &Q) -> Option<&V> 
+        where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         let bucket = self.bucket(key);
         self.buckets[bucket]
             .iter() // gives us Iterator<Item = &(K, V)>
-            .find(|&(ref ekey, _)| ekey == key) // equivalent to find(|x| &x.0 == key)
+            .find(|&(ref ekey, _)| ekey.borrow() == key) // equivalent to find(|x| &x.0 == key)
             .map(|&(_, ref v)| v)
     }
 
-    pub fn contains_key(&self, key: &K) -> bool {
+    pub fn contains_key<Q>(&self, key: &Q) -> bool 
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         self.get(key).is_some()
     }
 
-    pub fn remove(&mut self, key: &K) -> Option<V> {
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<V> 
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         let bucket = self.bucket(key);
         let bucket = &mut self.buckets[bucket];
-        let i = bucket.iter().position(|&(ref ekey, _)| ekey == key)?;
+        let i = bucket.iter().position(|&(ref ekey, _)| ekey.borrow() == key)?;
         self.items -= 1;
         Some(bucket.swap_remove(i).1)
     }
@@ -141,6 +241,55 @@ impl<'a, K, V> IntoIterator for &'a HashMap<K, V> {
     }
 }
 
+pub struct IntoIter<K, V> {
+    map: HashMap<K, V>,
+    bucket: usize,
+}
+
+impl<K, V> Iterator for IntoIter<K, V> {
+    type Item = (K, V);
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.map.buckets.get_mut(self.bucket) {
+                Some(bucket) => match bucket.pop() {
+                    Some(x) => break Some(x),
+                    None => {
+                        self.bucket += 1;
+                        continue;
+                    }
+                }, 
+                None => break None
+            }
+        }
+    }
+}
+
+
+impl<K, V> IntoIterator for HashMap<K, V> {
+    type Item = (K, V);
+    type IntoIter = IntoIter<K, V>;
+    fn into_iter(self) -> Self::IntoIter {
+        IntoIter {map: self, bucket: 0}
+    }
+}
+
+use std::iter::FromIterator;
+impl<K, V> FromIterator<(K, V)> for HashMap<K, V> 
+where 
+    K: Hash + Eq
+{
+    fn from_iter<I>(iter: I) -> Self 
+    where
+        I: IntoIterator<Item = (K, V)> 
+    {
+        let mut map = HashMap::new();
+        for (k, v) in iter {
+            map.insert(k, v);
+        }
+        map
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -178,5 +327,21 @@ mod tests {
             }
         }
         assert_eq!((&map).into_iter().count(), 5);
+
+        let mut items = 0;
+        for (k, v) in map {
+            match k {
+                "foo" => assert_eq!(v, 42),
+                "bar" => assert_eq!(v, 43),
+                "barz" => assert_eq!(v, 142),
+                "quee" => assert_eq!(v, 242),
+                "zeer" => assert_eq!(v, 442),
+                _ => unreachable!(),
+            }
+            items += 1;
+        }
+        assert_eq!(items, 5);
     }
+
+
 }

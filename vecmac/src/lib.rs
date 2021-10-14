@@ -1,0 +1,4 @@
+
+macro_rules! vec {
+    () => {};
+}

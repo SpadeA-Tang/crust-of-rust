@@ -32,27 +32,27 @@ impl<T> Cell<T> {
 mod test {
     use super::Cell;
 
-    #[test]
-    fn bac() {
-        use std::sync::Arc;
-        let x = Arc::new(42);
-        let x1 = Arc::clone(&x);
-        std::thread::spawn(|| {
-            x1.set(43);
-        });
-        let x2 = Arc::clone(&x);
-        std::thread::spawn(|| {
-            x2.set(44);
-        });
-    }
+    // #[test]
+    // fn bac() {
+    //     use std::sync::Arc;
+    //     let x = Arc::new(42);
+    //     let x1 = Arc::clone(&x);
+    //     std::thread::spawn(|| {
+    //         x1.set(43);
+    //     });
+    //     let x2 = Arc::clone(&x);
+    //     std::thread::spawn(|| {
+    //         x2.set(44);
+    //     });
+    // }
 
 
-    #[test]
-    fn bac2() {
-        let x = Cell::new(vec![42]);
-        let first = &x.get()[0];
-        x.set(vec![]);
-        eprintln!("{}", first);
+    // #[test]
+    // fn bac2() {
+    //     let x = Cell::new(vec![42]);
+    //     let first = &x.get()[0];
+    //     x.set(vec![]);
+    //     eprintln!("{}", first);
 
-    }
+    // }
 }

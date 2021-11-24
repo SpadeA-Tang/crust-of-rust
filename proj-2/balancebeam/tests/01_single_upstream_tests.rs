@@ -50,7 +50,7 @@ async fn test_simple_connections() {
 #[tokio::test]
 async fn test_multiple_requests_per_connection() {
     let num_connections = 5;
-    let requests_per_connection = 1000;
+    let requests_per_connection = 10000;
 
     let (balancebeam, upstream) = setup().await;
     let balancebeam_shared = Arc::new(balancebeam);
